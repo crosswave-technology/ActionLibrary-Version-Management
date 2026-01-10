@@ -1,0 +1,63 @@
+name: Log Management
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+on:
+  workflow_run:
+    workflows:
+      - Promote Version
+    types:
+      - completed
+  
+  workflow_dispatch:
+    inputs:
+      source_range:
+        description: 'Log range: all, latest, or a starting version (e.g., 1.2.3)'
+        required: true
+        default: 'latest'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  generate-logs:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Discover PR Via Commit
+        uses: actions/github-script@v6
+        id: lookup
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const sha = context.payload.workflow_run?.head_sha || context.sha;
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha
+            });
+            if (prs.length === 0) {
+              core.setFailed(`No PR found for commit ${sha}`);
+            } else {
+              core.setOutput('pr_number', prs[0].number);
+            }
+          
+      - name: Create Release
+        uses: crosswave-technology/ActionLibrary-Create-Log@master
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        with:
+          pr_number: ${{ steps.lookup.outputs.pr_number }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate ChangeLog
+        uses: crosswave-technology/ActionLibrary-Generate-Changelog@master
+        with:
+          pr_number: ${{ steps.lookup.outputs.pr_number }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          source_range: ${{ inputs.source_range || 'latest' }}

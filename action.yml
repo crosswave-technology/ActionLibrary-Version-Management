@@ -1,0 +1,155 @@
+name: Version Management
+description: 'Promote version based on PR labels or commit messages (updates VERSION file(s))'
+
+inputs:
+  pr_number:
+    description: 'Pull Request Number'
+    required: false
+  version_file:
+    description: 'Preferred VERSION file path (falls back to discovery if missing)'
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Ensure GitHub CLI is authenticated
+      shell: bash
+      run: |
+        set -e
+        if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+          export GH_TOKEN="$GITHUB_TOKEN"
+        fi
+        if [ -z "${GH_TOKEN:-}" ]; then
+          echo "Missing GH_TOKEN/GITHUB_TOKEN for GitHub CLI."
+          exit 1
+        fi
+        gh auth status || gh auth login --with-token <<< "$GH_TOKEN"
+
+    - name: Determine Promotion Type
+      id: promotion_type
+      shell: bash
+      run: |
+        set -e
+        echo "Determine version promotion type ..."
+        promotion_type=""
+        if [[ -n "${{ inputs.pr_number }}" ]]; then
+          labels=$(gh pr view ${{ inputs.pr_number }} --json labels --jq '.labels[].name')
+          for label in $labels; do
+            label_lower="${label,,}"
+            case "$label_lower" in
+              major) promotion_type="major"; break ;;
+              minor) promotion_type="minor"; break ;;
+              patch) promotion_type="patch"; break ;;
+            esac
+          done
+          if [[ -z "$promotion_type" ]]; then
+            title=$(gh pr view ${{ inputs.pr_number }} --json title --jq '.title')
+            title_lower=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
+            if [[ "$title_lower" =~ (^|[^a-z])major([^a-z]|$) ]]; then promotion_type="major"; fi
+            if [[ "$title_lower" =~ (^|[^a-z])minor([^a-z]|$) ]]; then promotion_type="minor"; fi
+            if [[ "$title_lower" =~ (^|[^a-z])patch([^a-z]|$) ]]; then promotion_type="patch"; fi
+          fi
+        fi
+
+        if [[ -z "$promotion_type" ]]; then
+          msg="${{ github.event.head_commit.message }}"
+          msg_lower=$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')
+          if [[ "$msg_lower" =~ (^|[^a-z])major([^a-z]|$) ]]; then promotion_type="major"; fi
+          if [[ "$msg_lower" =~ (^|[^a-z])minor([^a-z]|$) ]]; then promotion_type="minor"; fi
+          if [[ "$msg_lower" =~ (^|[^a-z])patch([^a-z]|$) ]]; then promotion_type="patch"; fi
+        fi
+
+        if [[ -z "$promotion_type" ]]; then
+          echo "No valid promotion type found (Major, Minor, Patch)"
+          exit 1
+        fi
+
+        echo "Promotion type: $promotion_type"
+        echo "promotion_type=$promotion_type" >> $GITHUB_ENV
+
+    - name: Promote VERSION file(s)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -z "${promotion_type:-}" ]; then
+          echo "Promotion type not set."
+          exit 1
+        fi
+
+        preferred_version_file="${{ inputs.version_file }}"
+        version_files=()
+
+        if [ -n "$preferred_version_file" ]; then
+          if [ -f "$preferred_version_file" ]; then
+            version_files+=("$preferred_version_file")
+          else
+            echo "Preferred version file '$preferred_version_file' not found; falling back to discovery."
+          fi
+        fi
+
+        if [ "${#version_files[@]}" -eq 0 ]; then
+          if [ -f "VERSION" ]; then
+            version_files=("VERSION")
+          elif [ -n "${{ inputs.pr_number }}" ]; then
+            echo "Discovering VERSION files from PR #${{ inputs.pr_number }} changes..."
+            mapfile -t changed_files < <(gh api "repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/files" --paginate --jq '.[].filename')
+            for file in "${changed_files[@]}"; do
+              [ -z "$file" ] && continue
+              dir=$(dirname "$file")
+              while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+                if [ -f "$dir/VERSION" ]; then
+                  version_files+=("$dir/VERSION")
+                fi
+                dir=$(dirname "$dir")
+              done
+            done
+          else
+            echo "No VERSION file at repo root and no pr_number provided."
+            exit 1
+          fi
+        fi
+
+        if [ "${#version_files[@]}" -eq 0 ]; then
+          echo "No VERSION files found."
+          exit 1
+        fi
+
+        mapfile -t version_files < <(printf '%s\n' "${version_files[@]}" | awk 'NF' | sort -u)
+
+        echo "VERSION files to update:"
+        printf ' - %s\n' "${version_files[@]}"
+
+        for version_file in "${version_files[@]}"; do
+          current_version=$(tr -d '[:space:]' < "$version_file")
+          if ! [[ "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format in $version_file: $current_version"
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<< "$current_version"
+          if [ "$promotion_type" = "major" ]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif [ "$promotion_type" = "minor" ]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          new_version="$major.$minor.$patch"
+          echo "$new_version" > "$version_file"
+          echo "Updated $version_file: $current_version -> $new_version"
+        done
+
+        if git diff --quiet; then
+          echo "No VERSION changes to commit."
+          exit 0
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add "${version_files[@]}"
+        git commit -m "chore: promote version"
+        git push

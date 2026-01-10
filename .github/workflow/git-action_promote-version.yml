@@ -1,0 +1,51 @@
+name: Promote Version
+permissions:
+  contents: write
+  pull-requests: read
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**/*.md'
+      - '.github/**'
+      - '**/docs/**'
+      - '**/VERSION'
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  promote-version:
+    name: Promote Version
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Discover PR Via Commit
+        uses: actions/github-script@v6
+        id: lookup
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const sha = context.sha;
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha
+            });
+            if (prs.length === 0) {
+              core.setFailed(`No PR found for commit ${sha}`);
+            } else {
+              core.setOutput('pr_number', prs[0].number);
+            }
+      
+      - name: Version Management
+        id: promote_version
+        uses: crosswave-technology/ActionLibrary-Version-Management@master
+        with:
+          pr_number: ${{ steps.lookup.outputs.pr_number }}
