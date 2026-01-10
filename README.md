@@ -95,13 +95,14 @@ jobs:
 
 ## Version File Format
 
-The file must contain a single semantic version string:
+The file must contain a single semantic version string (optional leading `v`):
 
 ```text
 1.2.3
+v1.2.3
 ```
 
-Whitespace is trimmed.
+Whitespace is trimmed and a leading `v` is preserved on write.
 
 ## Promotion Markers
 
