@@ -49,7 +49,7 @@ If no VERSION files are found, the action fails.
 
 ## Promotion Algorithm
 
-Given current version `X.Y.Z`:
+Leading `v` is allowed and preserved. Given current version `X.Y.Z`:
 
 - `major`: `X+1.0.0`
 - `minor`: `X.(Y+1).0`

@@ -25,6 +25,7 @@ The format is based on Keep a Changelog and this project aims to follow SemVer.
 - Action now updates VERSION file(s) and commits to the repo instead of updating a GitHub variable.
 - Promotion markers now use `Major`, `Minor`, and `Patch` labels (case-insensitive).
 - PR discovery now collects all VERSION files along changed file paths (de-duplicated).
+- VERSION values now support an optional leading `v` (preserved on write).
 
 ---
 

@@ -121,12 +121,20 @@ runs:
 
         for version_file in "${version_files[@]}"; do
           current_version=$(tr -d '[:space:]' < "$version_file")
-          if ! [[ "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          version_prefix=""
+          stripped_version="$current_version"
+          case "$stripped_version" in
+            v*|V*)
+              version_prefix="${stripped_version:0:1}"
+              stripped_version="${stripped_version:1}"
+              ;;
+          esac
+          if ! [[ "$stripped_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid version format in $version_file: $current_version"
             exit 1
           fi
 
-          IFS='.' read -r major minor patch <<< "$current_version"
+          IFS='.' read -r major minor patch <<< "$stripped_version"
           if [ "$promotion_type" = "major" ]; then
             major=$((major + 1))
             minor=0
@@ -138,7 +146,10 @@ runs:
             patch=$((patch + 1))
           fi
 
-          new_version="$major.$minor.$patch"
+          new_version="${major}.${minor}.${patch}"
+          if [ -n "$version_prefix" ]; then
+            new_version="${version_prefix}${new_version}"
+          fi
           echo "$new_version" > "$version_file"
           echo "Updated $version_file: $current_version -> $new_version"
         done
