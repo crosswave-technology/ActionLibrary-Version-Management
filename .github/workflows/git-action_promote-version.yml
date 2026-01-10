@@ -32,7 +32,14 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const sha = context.sha;
+            const prNumber =
+              context.payload.pull_request?.number ||
+              context.payload.workflow_run?.pull_requests?.[0]?.number;
+            if (prNumber) {
+              core.setOutput('pr_number', prNumber);
+              return;
+            }
+            const sha = context.payload.workflow_run?.head_sha || context.sha;
             const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
               repo: context.repo.repo,
