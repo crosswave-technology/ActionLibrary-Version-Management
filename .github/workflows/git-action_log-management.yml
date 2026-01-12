@@ -1,4 +1,9 @@
 name: Log Management
+run-name: >-
+  ${{ inputs.feature_name != '' && format('Manual Changelog Restructure: {0}', inputs.feature_name)
+      || inputs.version_file != '' && format('Manual Changelog Restructure: {0}', inputs.version_file)
+      || inputs.pr_number != '' && format('Manual Changelog Restructure: PR #{0}', inputs.pr_number)
+      || 'Manual Changelog Restructure' }}
 permissions:
   contents: write
   actions: read
@@ -7,6 +12,13 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      manual_intent:
+        description: 'Manual runs are for changelog restructure only. Leave as "changelog-restructure".'
+        required: true
+        default: 'changelog-restructure'
+      feature_name:
+        description: 'Feature name for run title (optional).'
+        required: false
       pr_number:
         description: 'PR number used to build logs (optional).'
         required: false
@@ -31,6 +43,15 @@ jobs:
       matrix: ${{ steps.targets.outputs.matrix }}
       pr_number: ${{ steps.lookup.outputs.pr_number }}
     steps:
+      - name: Validate Manual Intent
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          if [ "${{ inputs.manual_intent }}" != "changelog-restructure" ]; then
+            echo "Manual log management runs are for changelog restructure only. Set manual_intent to 'changelog-restructure'." >&2
+            exit 1
+          fi
+
       - name: Generate GitHub App Token
         id: app_token
         shell: bash
@@ -198,7 +219,7 @@ jobs:
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
 
   generate-logs:
-    name: Generate Logs
+    name: Generate Logs (feature: ${{ matrix.feature_slug }})
     runs-on: ubuntu-latest
     needs: discover
     if: ${{ needs.discover.outputs.matrix != '[]' }}
@@ -301,6 +322,9 @@ jobs:
           git push -u origin "$branch"
 
           title="ci: update logs and changelog"
+          if [ "${{ matrix.feature_slug }}" != "root" ]; then
+            title="ci: update logs and changelog (${{ matrix.feature_slug }})"
+          fi
           body="Automated log management"
           if [ -n "${{ needs.discover.outputs.pr_number }}" ]; then
             body="${body} for PR #${{ needs.discover.outputs.pr_number }}."
