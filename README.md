@@ -20,7 +20,7 @@ This composite action bumps semantic versions and commits the updated VERSION fi
 - Optional target: `version_file` input (relative to repo root) when provided.
 - Fallback: discover VERSION files by walking parent directories of PR-changed files and collecting all VERSION files found.
 - Applies one promotion type to all discovered VERSION files.
-- Commits and pushes changes using `github-actions[bot]`.
+- Commits changes using `github-actions[bot]` and pushes by default (set `push_changes=false` to skip).
 
 ## Inputs
 
@@ -28,6 +28,7 @@ This composite action bumps semantic versions and commits the updated VERSION fi
 | --- | --- | --- |
 | `pr_number` | No | PR number used for label lookup and file discovery. |
 | `version_file` | No | Preferred VERSION file path (relative to repo root). If missing or not found, discovery is used. |
+| `push_changes` | No | Push commits to the remote (default: `true`). |
 
 ## Permissions
 
