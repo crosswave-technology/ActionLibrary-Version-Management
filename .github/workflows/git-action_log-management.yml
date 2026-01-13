@@ -285,14 +285,6 @@ jobs:
           echo "base_branch=$base_branch" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release
-        uses: crosswave-technology/ActionLibrary-Create-Log@master
-        if: ${{ needs.discover.outputs.pr_number != '' }}
-        with:
-          pr_number: ${{ needs.discover.outputs.pr_number }}
-          github_token: ${{ steps.app_token.outputs.token }}
-          version_file: ${{ matrix.version_file }}
-
       - name: Generate ChangeLog
         uses: crosswave-technology/ActionLibrary-Generate-Changelog@master
         with:
