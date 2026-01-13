@@ -60,7 +60,7 @@ All targeted VERSION files receive the same promotion type.
 ## Git Operations
 
 - Uses `git diff --quiet` to detect changes.
-- Commits with message `chore: promote version`.
+- Commits with message `ci: promote version (old -> new)` and lists updated files in the body for multi-file updates.
 - Pushes to the current branch with `git push`.
 
 ## Permissions and Tokens

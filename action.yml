@@ -123,6 +123,9 @@ runs:
         echo "VERSION files to update:"
         printf ' - %s\n' "${version_files[@]}"
 
+        change_lines=()
+        change_summaries=()
+
         for version_file in "${version_files[@]}"; do
           current_version=$(tr -d '[:space:]' < "$version_file")
           version_prefix=""
@@ -156,6 +159,8 @@ runs:
           fi
           echo "$new_version" > "$version_file"
           echo "Updated $version_file: $current_version -> $new_version"
+          change_lines+=("$version_file: $current_version -> $new_version")
+          change_summaries+=("$current_version -> $new_version")
         done
 
         if git diff --quiet; then
@@ -166,7 +171,22 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add "${version_files[@]}"
-        git commit -m "ci: promote version"
+        commit_title="ci: promote version"
+        if [ "${#change_summaries[@]}" -eq 1 ]; then
+          commit_title="ci: promote version (${change_summaries[0]})"
+        elif [ "${#change_summaries[@]}" -gt 1 ]; then
+          commit_title="ci: promote version (${#change_summaries[@]} files)"
+        fi
+
+        commit_args=(-m "$commit_title")
+        if [ "${#change_lines[@]}" -gt 0 ]; then
+          commit_args+=(-m "Updates:")
+          for line in "${change_lines[@]}"; do
+            commit_args+=(-m "- $line")
+          done
+        fi
+
+        git commit "${commit_args[@]}"
         push_changes="${{ inputs.push_changes }}"
         push_changes_lower=$(printf '%s' "$push_changes" | tr '[:upper:]' '[:lower:]')
         if [ "$push_changes_lower" = "false" ]; then
