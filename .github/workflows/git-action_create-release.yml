@@ -91,9 +91,11 @@ jobs:
                 package_path="$candidate"
               fi
             fi
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
-            echo "package_path=$package_path" >> "$GITHUB_OUTPUT"
+            {
+              echo "should_release=true"
+              echo "release_version=$release_version"
+              echo "package_path=$package_path"
+            } >> "$GITHUB_OUTPUT"
             echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -108,9 +110,11 @@ jobs:
 
           if [ "${#log_files[@]}" -eq 0 ]; then
             echo "No new log files added; skipping release."
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "release_version=" >> "$GITHUB_OUTPUT"
-            echo "package_path=" >> "$GITHUB_OUTPUT"
+            {
+              echo "should_release=false"
+              echo "release_version="
+              echo "package_path="
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -133,7 +137,7 @@ jobs:
             package_path="."
           else
             feature_dir=$(dirname "$logs_dir")
-            feature_slug=$(printf '%s' "$feature_dir" | tr '[:upper:]' '[:lower:]' | tr '/\\' '-' | tr -c 'a-z0-9._-' '-' | tr -s '-')
+            feature_slug=$(printf '%s' "$feature_dir" | tr '[:upper:]' '[:lower:]' | tr "/\\" "-" | tr -c "a-z0-9._-" "-" | tr -s "-")
             feature_slug=${feature_slug#-}
             feature_slug=${feature_slug%-}
             if [ -z "$feature_slug" ]; then
@@ -143,9 +147,11 @@ jobs:
             package_path="$feature_dir"
           fi
 
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
-          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
-          echo "package_path=$package_path" >> "$GITHUB_OUTPUT"
+          {
+            echo "should_release=true"
+            echo "release_version=$release_version"
+            echo "package_path=$package_path"
+          } >> "$GITHUB_OUTPUT"
           echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
 
   create-package:
@@ -258,3 +264,4 @@ jobs:
         with:
           release_version: ${{ needs.detect-release.outputs.release_version }}
           artifacts_path: "${{ env.ARTIFACTS_ASSETS_PATH }}"
+

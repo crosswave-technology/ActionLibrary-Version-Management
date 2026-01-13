@@ -12,6 +12,10 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      auto_merge:
+        description: 'Auto-merge created PR (true/false).'
+        required: false
+        default: 'false'
       manual_intent:
         description: 'Manual runs are for changelog restructure only. Leave as "changelog-restructure".'
         required: true
@@ -31,7 +35,7 @@ on:
         default: 'latest'
 
 env:
-  AUTO_MERGE: "true"
+  AUTO_MERGE: ${{ inputs.auto_merge || vars.AUTO_MERGE || 'false' }}
   MERGE_METHOD: "merge"
   MERGE_ADMIN: "false"
 
@@ -142,7 +146,7 @@ jobs:
             if [ -f "$VERSION_FILE_INPUT" ]; then
               version_files+=("$VERSION_FILE_INPUT")
             else
-              echo "Preferred version file '$VERSION_FILE_INPUT' not found."
+              printf "Preferred version file %s not found.\n" "$VERSION_FILE_INPUT"
               exit 1
             fi
           fi
@@ -200,13 +204,13 @@ jobs:
               feature_slug="root"
               file_slug="root-version"
             else
-              feature_slug=$(printf '%s' "$dir" | tr '[:upper:]' '[:lower:]' | tr '/\\' '-' | tr -c 'a-z0-9._-' '-' | tr -s '-')
+              feature_slug=$(printf '%s' "$dir" | tr '[:upper:]' '[:lower:]' | tr "/\\" "-" | tr -c "a-z0-9._-" "-" | tr -s "-")
               feature_slug=${feature_slug#-}
               feature_slug=${feature_slug%-}
               if [ -z "$feature_slug" ]; then
                 feature_slug="feature"
               fi
-              file_slug=$(printf '%s' "$vf" | tr '[:upper:]' '[:lower:]' | tr '/\\' '-' | tr -c 'a-z0-9._-' '-' | tr -s '-')
+              file_slug=$(printf '%s' "$vf" | tr '[:upper:]' '[:lower:]' | tr "/\\" "-" | tr -c "a-z0-9._-" "-" | tr -s "-")
               file_slug=${file_slug#-}
               file_slug=${file_slug%-}
               if [ -z "$file_slug" ]; then
@@ -338,9 +342,9 @@ jobs:
           fi
 
           if [ "${AUTO_MERGE}" = "true" ]; then
-            merge_args="--${MERGE_METHOD} --auto"
+            merge_args=("--${MERGE_METHOD}" "--auto")
             if [ "${MERGE_ADMIN}" = "true" ]; then
-              merge_args="$merge_args --admin"
+              merge_args+=("--admin")
             fi
-            gh pr merge "$pr_number" $merge_args
+            gh pr merge "$pr_number" "${merge_args[@]}"
           fi

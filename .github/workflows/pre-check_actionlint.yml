@@ -1,0 +1,37 @@
+name: Actionlint Pre-Check
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: "1.6.27"
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${ACTIONLINT_VERSION}"
+          url="https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz"
+          curl -sSLo actionlint.tar.gz "$url"
+          tar -xzf actionlint.tar.gz actionlint
+          chmod +x actionlint
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Run actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint -color

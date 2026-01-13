@@ -15,7 +15,7 @@ on:
       - '**/VERSION'
 
 env:
-  AUTO_MERGE: "true"
+  AUTO_MERGE: ${{ vars.AUTO_MERGE || 'false' }}
   MERGE_METHOD: "merge"
   MERGE_ADMIN: "false"
   LOG_SOURCE_RANGE: "latest"
@@ -78,14 +78,30 @@ jobs:
               core.setOutput('pr_number', prNumber);
               return;
             }
+
             const sha = context.payload.workflow_run?.head_sha || context.sha;
-            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: sha
-            });
+            const maxAttempts = 6;
+            const delayMs = 10000;
+            let prs = [];
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: sha
+              });
+              prs = data || [];
+              if (prs.length > 0) {
+                break;
+              }
+              if (attempt < maxAttempts) {
+                core.info(`No PR found for commit ${sha}. Retry ${attempt}/${maxAttempts - 1} in ${delayMs / 1000}s...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              }
+            }
+
             if (prs.length === 0) {
-              core.setFailed(`No PR found for commit ${sha}`);
+              core.setFailed(`No PR found for commit ${sha} after ${maxAttempts} attempts.`);
             } else {
               core.setOutput('pr_number', prs[0].number);
             }
@@ -132,13 +148,13 @@ jobs:
               feature_slug="root"
               file_slug="root-version"
             else
-              feature_slug=$(printf '%s' "$dir" | tr '[:upper:]' '[:lower:]' | tr '/\\' '-' | tr -c 'a-z0-9._-' '-' | tr -s '-')
+              feature_slug=$(printf '%s' "$dir" | tr '[:upper:]' '[:lower:]' | tr "/\\" "-" | tr -c "a-z0-9._-" "-" | tr -s "-")
               feature_slug=${feature_slug#-}
               feature_slug=${feature_slug%-}
               if [ -z "$feature_slug" ]; then
                 feature_slug="feature"
               fi
-              file_slug=$(printf '%s' "$vf" | tr '[:upper:]' '[:lower:]' | tr '/\\' '-' | tr -c 'a-z0-9._-' '-' | tr -s '-')
+              file_slug=$(printf '%s' "$vf" | tr '[:upper:]' '[:lower:]' | tr "/\\" "-" | tr -c "a-z0-9._-" "-" | tr -s "-")
               file_slug=${file_slug#-}
               file_slug=${file_slug%-}
               if [ -z "$file_slug" ]; then
@@ -291,9 +307,9 @@ jobs:
           fi
 
           if [ "${AUTO_MERGE}" = "true" ]; then
-            merge_args="--${MERGE_METHOD} --auto"
+            merge_args=("--${MERGE_METHOD}" "--auto")
             if [ "${MERGE_ADMIN}" = "true" ]; then
-              merge_args="$merge_args --admin"
+              merge_args+=("--admin")
             fi
-            gh pr merge "$pr_number" $merge_args
+            gh pr merge "$pr_number" "${merge_args[@]}"
           fi
