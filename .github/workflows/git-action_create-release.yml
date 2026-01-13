@@ -3,7 +3,7 @@ run-name: >-
   ${{ startsWith(github.ref, 'refs/tags/')
       && format('Release: {0}', github.ref_name)
       || (github.event.head_commit && github.event.head_commit.added && github.event.head_commit.added[0])
-      && format('Release: {0}', replace(replace(replace(github.event.head_commit.added[0], 'logs/', ''), '.md', ''), '/', ' | '))
+      && format('Release: {0}', github.event.head_commit.added[0])
       || format('Release: {0}', github.ref_name) }}
 permissions:
   actions: write

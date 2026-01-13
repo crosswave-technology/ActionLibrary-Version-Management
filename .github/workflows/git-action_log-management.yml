@@ -216,10 +216,14 @@ jobs:
             json=$(jq --arg vf "$vf" --arg feature "$feature_slug" --arg file "$file_slug" '. + [{version_file:$vf, feature_slug:$feature, file_slug:$file}]' <<< "$json")
           done
 
-          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix<<EOF"
+            echo "$json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   generate-logs:
-    name: Generate Logs (feature: ${{ matrix.feature_slug }})
+    name: "Generate Logs (feature: ${{ matrix.feature_slug }})"
     runs-on: ubuntu-latest
     needs: discover
     if: ${{ needs.discover.outputs.matrix != '[]' }}
