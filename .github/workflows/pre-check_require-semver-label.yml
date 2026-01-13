@@ -39,12 +39,15 @@ jobs:
               per_page: 100,
             });
             const filenames = files.map(file => file.filename || "");
-            const relevantFiles = filenames.filter(
-              name => name && !name.toLowerCase().startsWith(".github/")
-            );
-            const nonDocFiles = relevantFiles.filter(
-              name => name && !name.toLowerCase().endsWith(".md")
-            );
+            const isIgnoredFile = name => {
+              const lower = name.toLowerCase();
+              return lower.startsWith(".github/") || lower === "version" || lower.endsWith("/version");
+            };
+            const relevantFiles = filenames.filter(name => name && !isIgnoredFile(name));
+            const nonDocFiles = relevantFiles.filter(name => {
+              const lower = name.toLowerCase();
+              return !lower.endsWith(".md");
+            });
             const isDocOnly = nonDocFiles.length === 0;
 
             let existing = null;
@@ -91,7 +94,7 @@ jobs:
 
             const renderNonDocSummary = () => {
               if (!relevantFiles.length) {
-                return "Only `.github/*` files were changed; version label is not required.";
+                return "Only `.github/*` or `VERSION` files were changed; version label is not required.";
               }
               if (!nonDocFiles.length) {
                 return "Doc-only changes detected (`*.md` only).";
@@ -129,7 +132,7 @@ jobs:
               "<details>",
               "<summary><strong>Doc-only exception</strong></summary>",
               "",
-              "If a PR changes only `*.md` files or `.github/*`, no version label is required.",
+              "If a PR changes only `*.md` files, `.github/*`, or `VERSION`, no version label is required.",
               "</details>",
             ].join("\n");
 
@@ -159,7 +162,7 @@ jobs:
               COMMENT_TAG,
               "### :information_source: Version label not required",
               "",
-              "Doc-only changes detected (`*.md` only) or changes limited to `.github/*`.",
+              "Doc-only changes detected (`*.md` only) or changes limited to `.github/*` or `VERSION`.",
               "",
               "No version label is required for this PR.",
             ].join("\n");
@@ -170,7 +173,7 @@ jobs:
                   await upsertComment(buildDocOnlyResolvedMessage(), { allowCreate: false });
                 }
                 await writeSummary("Version label not required (automated check)", [
-                "Doc-only changes detected (`*.md` only) or changes limited to `.github/*`.",
+                "Doc-only changes detected (`*.md` only) or changes limited to `.github/*` or `VERSION`.",
                 "",
                 "No version label is required for this PR.",
               ]);
