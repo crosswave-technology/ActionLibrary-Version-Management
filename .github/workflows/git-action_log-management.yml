@@ -325,7 +325,17 @@ jobs:
           if [ -n "${{ needs.discover.outputs.pr_number }}" ]; then
             body="${body} for PR #${{ needs.discover.outputs.pr_number }}."
           fi
-          pr_number=$(gh pr create --base "$base_branch" --head "$branch" --title "$title" --body "$body" --json number --jq '.number')
+          repo_owner="${GITHUB_REPOSITORY_OWNER:-${GITHUB_REPOSITORY%%/*}}"
+          pr_output=$(gh pr create --base "$base_branch" --head "$branch" --title "$title" --body "$body")
+          pr_url=$(printf '%s\n' "$pr_output" | awk 'NF{line=$0} END{print line}')
+          pr_number="${pr_url##*/}"
+          if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+            pr_number=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?head=${repo_owner}:${branch}" --jq '.[0].number')
+          fi
+          if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+            echo "Failed to determine PR number for ${branch}." >&2
+            exit 1
+          fi
 
           if [ "${AUTO_MERGE}" = "true" ]; then
             merge_args="--${MERGE_METHOD} --auto"
