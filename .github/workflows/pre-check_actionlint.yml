@@ -9,6 +9,10 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+    paths: 
+      - 'action.yml'
+      - 'action.yaml'
+      - '.github/workflows/**'
 
 jobs:
   actionlint:
