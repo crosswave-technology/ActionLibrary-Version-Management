@@ -1,4 +1,6 @@
-# **Action Library Version Management**
+<img src="docs/assets/brand/nexus-banner.svg" alt="Nexus — GitOps platform" width="100%">
+
+# **ActionLibrary Version Management**
 
 | **Home**
 | [Changelog](./CHANGELOG.md)
@@ -8,46 +10,31 @@
 
 ---
 
-Promotes VERSION file(s) based on PR labels or commit messages. Designed for repos that keep a single root VERSION or per-feature VERSION files.
+Composite GitHub Action that promotes semantic versions. It reads the promotion marker from a merged pull request — a `Major`, `Minor` or `Patch` label, with PR-title and commit-message fallbacks — bumps the matching `VERSION` file(s), and commits the result as `github-actions[bot]`. It supports a single root `VERSION` file and monorepo layouts with per-feature `VERSION` files discovered from the PR's changed paths.
 
-## Overview
+## Position in the release chain
 
-This composite action bumps semantic versions and commits the updated VERSION file(s) back to the repo. It determines the bump type from PR labels, PR title, or commit message markers.
+This action is the **first link of stage 1** of the Nexus promote-version chain. The `git-action_promote-version.yml` workflow runs it on an automation branch; the `VERSION` bump it produces is what [Create-Log](https://github.com/crosswave-technology/ActionLibrary-Create-Log) names its `logs/<version>.md` fragment after, and what stage 2 ultimately releases.
 
-## Behavior Summary
+```mermaid
+flowchart LR
+    PR["Merged PR carrying a<br/>Major / Minor / Patch label"] --> WF["git-action_promote-version.yml"]
+    subgraph STAGE1["Stage 1 — version promotion"]
+        VM["Version-Management<br/>bumps VERSION"] --> CL["Create-Log<br/>writes logs/&lt;version&gt;.md"] --> GC["Generate-Changelog<br/>assembles CHANGELOG.md"]
+    end
+    WF --> VM
+    GC --> APR["Automation PR<br/>ci: promote version"]
+    APR --> S2["Stage 2 — git-action_create-release.yml<br/>Create-Package, Create-Release"]
+    S2 --> REL["GitHub Release"]
+    classDef current fill:#1f6feb,stroke:#0d419d,color:#ffffff
+    class VM current
+```
 
-- Default target: `./VERSION` if it exists.
-- Optional target: `version_file` input (relative to repo root) when provided.
-- Fallback: discover VERSION files by walking parent directories of PR-changed files and collecting all VERSION files found.
-- Applies one promotion type to all discovered VERSION files.
-- Commits changes using `github-actions[bot]` and pushes by default (set `push_changes=false` to skip).
+## Quickstart
 
-## Inputs
-
-| Name | Required | Description |
-| --- | --- | --- |
-| `pr_number` | No | PR number used for label lookup and file discovery. |
-| `version_file` | No | Preferred VERSION file path (relative to repo root). If missing or not found, discovery is used. |
-| `push_changes` | No | Push commits to the remote (default: `true`). |
-
-## Permissions
-
-- `contents: write` to commit and push the updated file(s).
-- `pull-requests: read` to read labels and PR file lists.
-
-## Requirements
-
-- The repo must be checked out before running the action.
-- `gh` CLI and `git` are required (present on GitHub-hosted runners).
-- `GITHUB_TOKEN` or `GH_TOKEN` must be available.
-
-## Usage
-
-### Pull Request Event (Root VERSION)
+The repository must be checked out first; `gh` and `git` are present on GitHub-hosted runners.
 
 ```yaml
-on:
-  pull_request:
 jobs:
   promote:
     runs-on: ubuntu-latest
@@ -55,88 +42,27 @@ jobs:
       contents: write
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: crosswave-technology/ActionLibrary-Version-Management@main
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Version Management
+        uses: crosswave-technology/ActionLibrary-Version-Management@v1.0.0
         with:
           pr_number: ${{ github.event.pull_request.number }}
+          version_file: VERSION     # optional — discovery applies when omitted
+          push_changes: "false"     # optional — default "true"
 ```
 
-### Push Event (After Merge)
+All three inputs are optional: `pr_number` enables label lookup and per-feature discovery, `version_file` pins a specific target, and `push_changes: "false"` leaves the commit unpushed so a wrapping workflow (as in the Nexus estate) can push the automation branch itself. `GH_TOKEN` or `GITHUB_TOKEN` must be available in the environment.
 
-```yaml
-- name: Discover PR
-  id: lookup
-  uses: actions/github-script@v6
-  with:
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-    script: |
-      const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        commit_sha: context.sha
-      });
-      if (prs.length === 0) core.setFailed("No PR found");
-      else core.setOutput("pr_number", prs[0].number);
+## Navigation
 
-- name: Promote version
-  uses: crosswave-technology/ActionLibrary-Version-Management@main
-  with:
-    pr_number: ${{ steps.lookup.outputs.pr_number }}
-```
-
-### Per-Feature VERSION File
-
-```yaml
-- uses: actions/checkout@v4
-- uses: crosswave-technology/ActionLibrary-Version-Management@main
-  with:
-    version_file: feature_1/VERSION
-    pr_number: ${{ github.event.pull_request.number }}
-```
-
-## Version File Format
-
-The file must contain a single semantic version string (optional leading `v`):
-
-```text
-1.2.3
-v1.2.3
-```
-
-Whitespace is trimmed and a leading `v` is preserved on write.
-
-## Promotion Markers
-
-The action looks for the following markers (case-insensitive):
-
-- Labels: `Major`, `Minor`, `Patch`
-- PR title: same strings
-- Commit message (fallback): same strings
-
-The `Documentation` label is ignored by this action.
-
-If none are found, the action fails.
-
-## Discovery Rules
-
-Order of precedence:
-
-1. `version_file` input if provided and exists.
-2. Root `./VERSION` if present.
-3. If `pr_number` is provided, walk parent directories of each changed file and collect all `VERSION` files found (de-duplicated).
-4. Fail if nothing is found.
-
-Note: If a root `VERSION` exists, per-feature discovery is skipped.
-
-## Troubleshooting
-
-- `No valid promotion type found`: ensure the PR has one of the required labels or markers.
-- `No VERSION files found`: add `VERSION` at repo root or ensure PR-changed directories contain `VERSION`.
-- `Invalid version format`: ensure the file contains `X.Y.Z` only.
-- `Push failed`: confirm `contents: write` and that the workflow runs on a branch the token can push to.
+- [techdoc.md](./techdoc.md) — promotion and discovery algorithms, input contract, `VERSION` format, limitations.
+- [CHANGELOG.md](./CHANGELOG.md) — assembled release history (generated; do not hand-edit).
+- [logs/](./logs/) — canonical release-note fragments.
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — change and testing workflow.
+- Downstream in the chain: [ActionLibrary-Create-Log](https://github.com/crosswave-technology/ActionLibrary-Create-Log) · [ActionLibrary-Generate-Changelog](https://github.com/crosswave-technology/ActionLibrary-Generate-Changelog) · [ActionLibrary-Create-Package](https://github.com/crosswave-technology/ActionLibrary-Create-Package) · [ActionLibrary-Create-Release](https://github.com/crosswave-technology/ActionLibrary-Create-Release)
 
 ---
 
-<p style="text-align: center;"><a href="#">Return to Top</a></p>
-
 <h6 style="text-align: center;">Copyright &copy; Crosswave Technology Ltd</h6>
+
+*Nexus docs-restructure mission · 2026-08-04 · pending Sean review.*

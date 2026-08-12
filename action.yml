@@ -13,6 +13,35 @@ inputs:
     required: false
     default: 'true'
 
+outputs:
+  promotion_type:
+    description: 'Resolved promotion type: major, minor or patch.'
+    value: ${{ steps.promotion_type.outputs.promotion_type }}
+  promotion_source:
+    description: 'Where the promotion type was resolved from: pr_label, pr_title or commit_message.'
+    value: ${{ steps.promotion_type.outputs.promotion_source }}
+  promotion_reason:
+    description: 'Human-readable reason for the promotion type (which marker decided it).'
+    value: ${{ steps.promotion_type.outputs.promotion_reason }}
+  version_files:
+    description: 'Newline-separated list of VERSION files that were promoted.'
+    value: ${{ steps.promote.outputs.version_files }}
+  previous_version:
+    description: 'Version before the bump. Set only when exactly one VERSION file was promoted.'
+    value: ${{ steps.promote.outputs.previous_version }}
+  new_version:
+    description: 'Version after the bump. Set only when exactly one VERSION file was promoted.'
+    value: ${{ steps.promote.outputs.new_version }}
+  changes:
+    description: 'Newline-separated "<file>: <old> -> <new>" line per promoted VERSION file.'
+    value: ${{ steps.promote.outputs.changes }}
+  committed:
+    description: 'true when a commit was created, false when there was nothing to commit.'
+    value: ${{ steps.promote.outputs.committed }}
+  pushed:
+    description: 'true when the commit was pushed, false when push_changes=false or nothing was committed.'
+    value: ${{ steps.promote.outputs.pushed }}
+
 runs:
   using: "composite"
   steps:
@@ -32,56 +61,164 @@ runs:
     - name: Determine Promotion Type
       id: promotion_type
       shell: bash
+      # Event data and inputs are passed through env: and never interpolated into
+      # the script body. This job runs with a GitHub App installation token in
+      # scope, so a crafted commit message must not be able to reach the shell.
+      env:
+        PR_NUMBER: ${{ inputs.pr_number }}
+        HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
       run: |
-        set -e
+        set -euo pipefail
         echo "Determine version promotion type ..."
+
         promotion_type=""
-        if [[ -n "${{ inputs.pr_number }}" ]]; then
-          labels=$(gh pr view ${{ inputs.pr_number }} --json labels --jq '.labels[].name')
-          for label in $labels; do
-            label_lower="${label,,}"
-            case "$label_lower" in
-              major) promotion_type="major"; break ;;
-              minor) promotion_type="minor"; break ;;
-              patch) promotion_type="patch"; break ;;
-            esac
-          done
-          if [[ -z "$promotion_type" ]]; then
-            title=$(gh pr view ${{ inputs.pr_number }} --json title --jq '.title')
+        promotion_source=""
+        promotion_reason=""
+
+        # Precedence is fixed: major beats minor beats patch, everywhere.
+        rank_of() {
+          case "$1" in
+            major) printf '3' ;;
+            minor) printf '2' ;;
+            patch) printf '1' ;;
+            *) printf '0' ;;
+          esac
+        }
+
+        if [ -n "${PR_NUMBER:-}" ]; then
+          # EXACT, case-insensitive whole-label match. This is deliberately the
+          # same rule as the semver gate in pre-check_require-semver-label.yml
+          # ("REQUIRED_LABELS.includes(l.toLowerCase())"), so the gate and the
+          # bump can no longer disagree. Labels are read one per line, never
+          # word-split: "enhancement-major-x" and "Major refactor" are NOT
+          # version labels and must not promote.
+          labels=()
+          mapfile -t labels < <(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')
+
+          matched=()
+          if [ "${#labels[@]}" -gt 0 ]; then
+            for label in "${labels[@]}"; do
+              [ -n "$label" ] || continue
+              label_lower=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]')
+              case "$label_lower" in
+                major|minor|patch) matched+=("$label_lower") ;;
+              esac
+            done
+          fi
+
+          if [ "${#matched[@]}" -gt 0 ]; then
+            distinct=()
+            mapfile -t distinct < <(printf '%s\n' "${matched[@]}" | sort -u)
+            if [ "${#distinct[@]}" -gt 1 ]; then
+              # The semver gate fails a PR carrying more than one version label,
+              # so this should be unreachable; if labels changed after the gate
+              # ran, promote deterministically on the highest precedence.
+              echo "::warning title=Multiple version labels::PR #${PR_NUMBER} carries several version labels (${distinct[*]}); promoting on the highest precedence."
+            fi
+            best_rank=0
+            for candidate in "${matched[@]}"; do
+              candidate_rank=$(rank_of "$candidate")
+              if [ "$candidate_rank" -gt "$best_rank" ]; then
+                best_rank="$candidate_rank"
+                promotion_type="$candidate"
+              fi
+            done
+            if [ -n "$promotion_type" ]; then
+              promotion_source="pr_label"
+              promotion_reason="PR #${PR_NUMBER} label '${promotion_type}'"
+            fi
+          fi
+
+          if [ -z "$promotion_type" ]; then
+            title=$(gh pr view "$PR_NUMBER" --json title --jq '.title')
             title_lower=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
-            if [[ "$title_lower" =~ (^|[^a-z])major([^a-z]|$) ]]; then promotion_type="major"; fi
-            if [[ "$title_lower" =~ (^|[^a-z])minor([^a-z]|$) ]]; then promotion_type="minor"; fi
-            if [[ "$title_lower" =~ (^|[^a-z])patch([^a-z]|$) ]]; then promotion_type="patch"; fi
+            # Ordered highest-precedence-first with a break, so a title carrying
+            # several markers promotes on the highest one rather than the last.
+            for candidate in major minor patch; do
+              if [[ "$title_lower" =~ (^|[^a-z])${candidate}([^a-z]|$) ]]; then
+                promotion_type="$candidate"
+                promotion_source="pr_title"
+                promotion_reason="PR #${PR_NUMBER} title marker '${candidate}'"
+                break
+              fi
+            done
           fi
         fi
 
-        if [[ -z "$promotion_type" ]]; then
-          msg="${{ github.event.head_commit.message }}"
-          msg_lower=$(printf '%s' "$msg" | tr '[:upper:]' '[:lower:]')
-          if [[ "$msg_lower" =~ (^|[^a-z])major([^a-z]|$) ]]; then promotion_type="major"; fi
-          if [[ "$msg_lower" =~ (^|[^a-z])minor([^a-z]|$) ]]; then promotion_type="minor"; fi
-          if [[ "$msg_lower" =~ (^|[^a-z])patch([^a-z]|$) ]]; then promotion_type="patch"; fi
+        if [ -z "$promotion_type" ]; then
+          msg_lower=$(printf '%s' "${HEAD_COMMIT_MESSAGE:-}" | tr '[:upper:]' '[:lower:]')
+          for candidate in major minor patch; do
+            if [[ "$msg_lower" =~ (^|[^a-z])${candidate}([^a-z]|$) ]]; then
+              promotion_type="$candidate"
+              promotion_source="commit_message"
+              promotion_reason="Head commit message marker '${candidate}'"
+              break
+            fi
+          done
         fi
 
-        if [[ -z "$promotion_type" ]]; then
+        if [ -z "$promotion_type" ]; then
           echo "No valid promotion type found (Major, Minor, Patch)"
           exit 1
         fi
 
-        echo "Promotion type: $promotion_type"
-        echo "promotion_type=$promotion_type" >> $GITHUB_ENV
+        # Single-line by construction; strip newlines defensively before the
+        # value reaches $GITHUB_OUTPUT.
+        promotion_reason=$(printf '%s' "$promotion_reason" | tr -d '\r\n')
+
+        echo "Promotion type: $promotion_type (source: $promotion_source; $promotion_reason)"
+        {
+          echo "promotion_type=$promotion_type"
+          echo "promotion_source=$promotion_source"
+          echo "promotion_reason=$promotion_reason"
+        } >> "$GITHUB_OUTPUT"
+        # Retained for backwards compatibility with consumers that read the
+        # environment variable rather than the step output.
+        echo "promotion_type=$promotion_type" >> "$GITHUB_ENV"
 
     - name: Promote VERSION file(s)
+      id: promote
       shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr_number }}
+        VERSION_FILE: ${{ inputs.version_file }}
+        PUSH_CHANGES: ${{ inputs.push_changes }}
+        PROMOTION_TYPE: ${{ steps.promotion_type.outputs.promotion_type }}
       run: |
         set -euo pipefail
-        if [ -z "${promotion_type:-}" ]; then
+        promotion_type="${PROMOTION_TYPE:-${promotion_type:-}}"
+        if [ -z "$promotion_type" ]; then
           echo "Promotion type not set."
           exit 1
         fi
 
-        preferred_version_file="${{ inputs.version_file }}"
+        preferred_version_file="${VERSION_FILE:-}"
         version_files=()
+        change_lines=()
+        change_summaries=()
+        previous_version=""
+        new_version=""
+        committed="false"
+        pushed="false"
+
+        emit_outputs() {
+          {
+            echo "version_files<<NEXUS_EOF"
+            if [ "${#version_files[@]}" -gt 0 ]; then
+              printf '%s\n' "${version_files[@]}"
+            fi
+            echo "NEXUS_EOF"
+            echo "changes<<NEXUS_EOF"
+            if [ "${#change_lines[@]}" -gt 0 ]; then
+              printf '%s\n' "${change_lines[@]}"
+            fi
+            echo "NEXUS_EOF"
+            echo "previous_version=$previous_version"
+            echo "new_version=$new_version"
+            echo "committed=$committed"
+            echo "pushed=$pushed"
+          } >> "$GITHUB_OUTPUT"
+        }
 
         if [ -n "$preferred_version_file" ]; then
           if [ -f "$preferred_version_file" ]; then
@@ -94,9 +231,9 @@ runs:
         if [ "${#version_files[@]}" -eq 0 ]; then
           if [ -f "VERSION" ]; then
             version_files=("VERSION")
-          elif [ -n "${{ inputs.pr_number }}" ]; then
-            echo "Discovering VERSION files from PR #${{ inputs.pr_number }} changes..."
-            mapfile -t changed_files < <(gh api "repos/${{ github.repository }}/pulls/${{ inputs.pr_number }}/files" --paginate --jq '.[].filename')
+          elif [ -n "${PR_NUMBER:-}" ]; then
+            echo "Discovering VERSION files from PR #${PR_NUMBER} changes..."
+            mapfile -t changed_files < <(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
             for file in "${changed_files[@]}"; do
               [ -z "$file" ] && continue
               dir=$(dirname "$file")
@@ -123,9 +260,6 @@ runs:
         echo "VERSION files to update:"
         printf ' - %s\n' "${version_files[@]}"
 
-        change_lines=()
-        change_summaries=()
-
         for version_file in "${version_files[@]}"; do
           current_version=$(tr -d '[:space:]' < "$version_file")
           version_prefix=""
@@ -136,6 +270,10 @@ runs:
               stripped_version="${stripped_version:1}"
               ;;
           esac
+          # Deliberately strict: arithmetic promotion is only defined for a plain
+          # X.Y.Z base. A pre-release VERSION (e.g. v1.6.0-alpha.1) is rejected
+          # rather than guessed at; pre-release tags are minted by the release
+          # workflow, not by promoting a pre-release VERSION file.
           if ! [[ "$stripped_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid version format in $version_file: $current_version"
             exit 1
@@ -153,18 +291,23 @@ runs:
             patch=$((patch + 1))
           fi
 
-          new_version="${major}.${minor}.${patch}"
+          bumped_version="${major}.${minor}.${patch}"
           if [ -n "$version_prefix" ]; then
-            new_version="${version_prefix}${new_version}"
+            bumped_version="${version_prefix}${bumped_version}"
           fi
-          echo "$new_version" > "$version_file"
-          echo "Updated $version_file: $current_version -> $new_version"
-          change_lines+=("$version_file: $current_version -> $new_version")
-          change_summaries+=("$current_version -> $new_version")
+          echo "$bumped_version" > "$version_file"
+          echo "Updated $version_file: $current_version -> $bumped_version"
+          change_lines+=("$version_file: $current_version -> $bumped_version")
+          change_summaries+=("$current_version -> $bumped_version")
+          if [ "${#version_files[@]}" -eq 1 ]; then
+            previous_version="$current_version"
+            new_version="$bumped_version"
+          fi
         done
 
         if git diff --quiet; then
           echo "No VERSION changes to commit."
+          emit_outputs
           exit 0
         fi
 
@@ -187,11 +330,15 @@ runs:
         fi
 
         git commit "${commit_args[@]}"
-        push_changes="${{ inputs.push_changes }}"
-        push_changes_lower=$(printf '%s' "$push_changes" | tr '[:upper:]' '[:lower:]')
+        committed="true"
+
+        push_changes_lower=$(printf '%s' "${PUSH_CHANGES:-}" | tr '[:upper:]' '[:lower:]')
         if [ "$push_changes_lower" = "false" ]; then
           echo "Skipping push (push_changes=false)."
+          emit_outputs
           exit 0
         fi
 
         git push
+        pushed="true"
+        emit_outputs
