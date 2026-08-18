@@ -49,11 +49,17 @@ runs:
       shell: bash
       run: |
         set -e
+        # Failure capture in metadata-only mode: this step handles a token, so
+        # no captured output text may reach the summary.
+        # shellcheck source=scripts/nexus-summary.sh
+        . "$GITHUB_ACTION_PATH/scripts/nexus-summary.sh"
+        nexus_capture "Ensure GitHub CLI is authenticated" meta
         if [ -z "${GH_TOKEN:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
           export GH_TOKEN="$GITHUB_TOKEN"
         fi
         if [ -z "${GH_TOKEN:-}" ]; then
           echo "Missing GH_TOKEN/GITHUB_TOKEN for GitHub CLI."
+          nexus_note_cause "Missing GH_TOKEN/GITHUB_TOKEN for GitHub CLI."
           exit 1
         fi
         gh auth status || gh auth login --with-token <<< "$GH_TOKEN"
@@ -69,6 +75,9 @@ runs:
         HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
       run: |
         set -euo pipefail
+        # shellcheck source=scripts/nexus-summary.sh
+        . "$GITHUB_ACTION_PATH/scripts/nexus-summary.sh"
+        nexus_capture "Determine Promotion Type"
         echo "Determine version promotion type ..."
 
         promotion_type=""
@@ -159,6 +168,7 @@ runs:
 
         if [ -z "$promotion_type" ]; then
           echo "No valid promotion type found (Major, Minor, Patch)"
+          nexus_note_cause "No valid promotion type found: PR #${PR_NUMBER:-none} carries no major/minor/patch label, its title has no marker, and the head commit message has none either."
           exit 1
         fi
 
@@ -186,9 +196,14 @@ runs:
         PROMOTION_TYPE: ${{ steps.promotion_type.outputs.promotion_type }}
       run: |
         set -euo pipefail
+        # shellcheck source=scripts/nexus-summary.sh
+        . "$GITHUB_ACTION_PATH/scripts/nexus-summary.sh"
+        nexus_capture "Promote VERSION file(s)"
+
         promotion_type="${PROMOTION_TYPE:-${promotion_type:-}}"
         if [ -z "$promotion_type" ]; then
           echo "Promotion type not set."
+          nexus_note_cause "Promotion type not set."
           exit 1
         fi
 
@@ -246,12 +261,14 @@ runs:
             done
           else
             echo "No VERSION file at repo root and no pr_number provided."
+            nexus_note_cause "No VERSION file at the repository root and no pr_number provided, so there is nothing to discover from."
             exit 1
           fi
         fi
 
         if [ "${#version_files[@]}" -eq 0 ]; then
           echo "No VERSION files found."
+          nexus_note_cause "No VERSION files found to promote."
           exit 1
         fi
 
@@ -276,6 +293,7 @@ runs:
           # workflow, not by promoting a pre-release VERSION file.
           if ! [[ "$stripped_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid version format in $version_file: $current_version"
+            nexus_note_cause "Invalid version format in ${version_file}: '${current_version}'. Arithmetic promotion is defined only for a plain X.Y.Z base."
             exit 1
           fi
 
@@ -342,3 +360,21 @@ runs:
         git push
         pushed="true"
         emit_outputs
+
+    # Own ruled box, written whatever happened above.
+    - name: Version summary
+      if: ${{ always() }}
+      shell: bash
+      env:
+        RESOLVE_OUTCOME: ${{ steps.promotion_type.outcome }}
+        PROMOTE_OUTCOME: ${{ steps.promote.outcome }}
+        PROMOTION_TYPE: ${{ steps.promotion_type.outputs.promotion_type }}
+        PROMOTION_SOURCE: ${{ steps.promotion_type.outputs.promotion_source }}
+        PROMOTION_REASON: ${{ steps.promotion_type.outputs.promotion_reason }}
+        CHANGES: ${{ steps.promote.outputs.changes }}
+        PREVIOUS_VERSION: ${{ steps.promote.outputs.previous_version }}
+        NEW_VERSION: ${{ steps.promote.outputs.new_version }}
+        COMMITTED: ${{ steps.promote.outputs.committed }}
+        PUSHED: ${{ steps.promote.outputs.pushed }}
+        PUSH_CHANGES: ${{ inputs.push_changes }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/summary-version-management.sh"
